@@ -8,8 +8,9 @@ import "./SafeMath.sol";
 import "./Ownable.sol";
 import "./IERC20.sol";
 import "./SafeERC20.sol";
+import "./ReentrancyGuard.sol";
 
-contract FarmLockTier is Ownable {
+contract FarmLockTier is Ownable, ReentrancyGuard  {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
 
@@ -21,7 +22,7 @@ contract FarmLockTier is Ownable {
         uint256 lockedUntil; // Locked until end time of actual IDO lock
     }
 
-    // Info of each pool.
+    // Info of the pool.
     struct PoolInfo {
         IERC20 lpToken;           // Address of LP token contract.
         uint256 allocPoint;       // How many allocation points assigned to this pool. REWARDTOKENs to distribute per block.
@@ -50,6 +51,9 @@ contract FarmLockTier is Ownable {
     
     // Maximum lock duration in sec (10 days)
     uint256 public constant MAX_LOCK_DURATION = 864000;
+    
+    // Maximum withdrawal fee in basis point (max 10%)
+    uint256 public constant MAX_WITHDRAWAL_FEE = 1000;    
 
     // unique pool info
     PoolInfo public poolInfo;
@@ -92,16 +96,14 @@ contract FarmLockTier is Ownable {
         // Withdrawal fee limited to max 10%
         require(_withdrawalFeeBP <= 1000, "contract: invalid withdrawal fee basis points");
 
-        // staking pool
-        PoolInfo({
-            lpToken: _lpOrToken,
-            allocPoint: 1000,
-            lastRewardBlock: startBlock,
-            accRewardTPerShare: 0,
-            withdrawalFeeBP: _withdrawalFeeBP,
-            endBlock: _endBlock,
-            totalLockedAmount: 0
-        });
+        // init staking pool
+        poolInfo.lpToken = _lpOrToken;
+        poolInfo.allocPoint = 1000;        
+        poolInfo.lastRewardBlock = startBlock;
+        poolInfo.accRewardTPerShare = 0;
+        poolInfo.withdrawalFeeBP = _withdrawalFeeBP;
+        poolInfo.endBlock = _endBlock;
+        poolInfo.totalLockedAmount = 0;
         
         totalAllocPoint = 1000;
 
@@ -297,7 +299,7 @@ contract FarmLockTier is Ownable {
     
     // Update the given pool's withdrawal fee. Can only be called by the owner.
     function updateWithdrawalFeeBP(uint16 _withdrawalFeeBP) public onlyOwner {
-        require(_withdrawalFeeBP <= 10000, "updateWithdrawalFeeBP: invalid withdrawal fee basis points");
+        require(_withdrawalFeeBP <= MAX_WITHDRAWAL_FEE, "updateWithdrawalFeeBP: invalid withdrawal fee basis points");
         emit WithdrawalFeeUpdated(msg.sender, poolInfo.withdrawalFeeBP, _withdrawalFeeBP);
         poolInfo.withdrawalFeeBP = _withdrawalFeeBP;
     } 
