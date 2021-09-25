@@ -156,7 +156,7 @@ contract FarmLockTier is Ownable, ReentrancyGuard  {
     }
 
     // Stake LP or token
-    function deposit(uint256 _amount) public {
+    function deposit(uint256 _amount) public nonReentrant {
         PoolInfo storage pool = poolInfo;
         UserInfo storage user = userInfo[msg.sender];
 
@@ -182,7 +182,7 @@ contract FarmLockTier is Ownable, ReentrancyGuard  {
     }
 
     // Withdraw LP or token
-    function withdraw(uint256 _amount) public {
+    function withdraw(uint256 _amount) public nonReentrant {
         PoolInfo storage pool = poolInfo;
         UserInfo storage user = userInfo[msg.sender];
         
@@ -239,7 +239,7 @@ contract FarmLockTier is Ownable, ReentrancyGuard  {
     
     // Lock LP or token
     // To participate IDO, need locked amount for a duration
-    function lock(uint256 _amount) public {
+    function lock(uint256 _amount) public nonReentrant {
         PoolInfo storage pool = poolInfo;
         UserInfo storage user = userInfo[msg.sender];
         
@@ -257,7 +257,7 @@ contract FarmLockTier is Ownable, ReentrancyGuard  {
     }    
 
     // Withdraw without caring about rewards. EMERGENCY ONLY.
-    function emergencyWithdraw() public {
+    function emergencyWithdraw() public nonReentrant {
         PoolInfo storage pool = poolInfo;
         UserInfo storage user = userInfo[msg.sender];
 
