@@ -25,7 +25,6 @@ contract FarmLockTier is Ownable, ReentrancyGuard  {
     // Info of the pool.
     struct PoolInfo {
         IERC20 lpToken;           // Address of LP token contract.
-        uint256 allocPoint;       // How many allocation points assigned to this pool. REWARDTOKENs to distribute per block.
         uint256 lastRewardBlock;  // Last block number that REWARDTOKENs distribution occurs.
         uint256 accRewardTPerShare; // Accumulated REWARDTOKENs per share, times 1e30. See below.
         uint16 withdrawalFeeBP;      // Withdrawal fee in basis points
@@ -40,8 +39,8 @@ contract FarmLockTier is Ownable, ReentrancyGuard  {
         uint256 end; // UNIX timestamp of the unlock
     }    
 
-    IERC20 public lpOrToken;
-    IERC20 public rewardToken;
+    IERC20 public immutable lpOrToken;
+    IERC20 public immutable rewardToken;
 
     // REWARDTOKEN tokens created per block.
     uint256 public rewardPerBlock;
@@ -59,8 +58,6 @@ contract FarmLockTier is Ownable, ReentrancyGuard  {
     PoolInfo public poolInfo;
     // Info of each user that stakes LP tokens.
     mapping (address => UserInfo) public userInfo;
-    // Total allocation poitns. Must be the sum of all allocation points in all pools.
-    uint256 private totalAllocPoint = 0;
     // The block number when REWARDTOKEN pool starts.
     uint256 public startBlock;
     
@@ -71,13 +68,16 @@ contract FarmLockTier is Ownable, ReentrancyGuard  {
     event EmergencyWithdraw(address indexed user, uint256 amount);
     event FeeAddressUpdated(address indexed user, address indexed newAddress);
     event LockedAmount(address indexed user, uint256 indexed amount);
-    event StartLockTimeUpdated(address indexed user, uint256 previousAmount, uint256 newAmount);
-    event MaxLockTimeUpdated(address indexed user, uint256 previousAmount, uint256 newAmount);
-    event EndLockTimeUpdated(address indexed user, uint256 previousAmount, uint256 newAmount);
-    event StartBlockUpdated(address indexed user, uint256 previousAmount, uint256 newAmount);
-    event EndBlockUpdated(address indexed user, uint256 previousAmount, uint256 newAmount);
+    event StartLockTimeUpdated(address indexed user, uint256 previousValue, uint256 newValue);
+    event MaxLockTimeUpdated(address indexed user, uint256 previousValue, uint256 newValue);
+    event EndLockTimeUpdated(address indexed user, uint256 previousValue, uint256 newValue);
+    event StartBlockUpdated(address indexed user, uint256 previousValue, uint256 newValue);
+    event EndBlockUpdated(address indexed user, uint256 previousValue, uint256 newValue);
     event WithdrawalFeeUpdated(address indexed user, uint16 previousAmount, uint16 newAmount);
-
+    event StopReward(address indexed user, uint256 previousValue, uint256 newValue);
+    event RewardPerBlockUpdated(address indexed user, uint256 previousAmount, uint256 newAmount);
+    event EmergencyRewardWithdraw(address indexed user, uint256 indexed amount);
+    
     constructor(
         IERC20 _lpOrToken,
         IERC20 _rewardToken,
@@ -95,21 +95,21 @@ contract FarmLockTier is Ownable, ReentrancyGuard  {
 
         // Withdrawal fee limited to max 10%
         require(_withdrawalFeeBP <= 1000, "contract: invalid withdrawal fee basis points");
+        
+        // Reward token must be different than deposit token
+        require(_lpOrToken != _rewardToken, "same tokens");
 
         // init staking pool
         poolInfo.lpToken = _lpOrToken;
-        poolInfo.allocPoint = 1000;        
         poolInfo.lastRewardBlock = startBlock;
         poolInfo.accRewardTPerShare = 0;
         poolInfo.withdrawalFeeBP = _withdrawalFeeBP;
         poolInfo.endBlock = _endBlock;
         poolInfo.totalLockedAmount = 0;
-        
-        totalAllocPoint = 1000;
-
     }
 
-    function stopReward() public onlyOwner {
+    function stopReward() external onlyOwner {
+        emit StopReward(msg.sender, poolInfo.endBlock, block.number);
         poolInfo.endBlock = block.number;
     }
 
@@ -132,7 +132,7 @@ contract FarmLockTier is Ownable, ReentrancyGuard  {
         uint256 lpSupply = pool.lpToken.balanceOf(address(this));
         if (block.number > pool.lastRewardBlock && lpSupply != 0) {
             uint256 multiplier = getMultiplier(pool.lastRewardBlock, block.number);
-            uint256 rewardTReward = multiplier.mul(rewardPerBlock).mul(pool.allocPoint).div(totalAllocPoint);
+            uint256 rewardTReward = multiplier.mul(rewardPerBlock);
             accRewardTPerShare = accRewardTPerShare.add(rewardTReward.mul(1e30).div(lpSupply));
         }
         return user.amount.mul(accRewardTPerShare).div(1e30).sub(user.rewardDebt);
@@ -150,13 +150,13 @@ contract FarmLockTier is Ownable, ReentrancyGuard  {
             return;
         }
         uint256 multiplier = getMultiplier(pool.lastRewardBlock, block.number);
-        uint256 rewardTReward = multiplier.mul(rewardPerBlock).mul(pool.allocPoint).div(totalAllocPoint);
+        uint256 rewardTReward = multiplier.mul(rewardPerBlock);
         pool.accRewardTPerShare = pool.accRewardTPerShare.add(rewardTReward.mul(1e30).div(lpSupply));
         pool.lastRewardBlock = block.number;
     }
 
     // Stake LP or token
-    function deposit(uint256 _amount) public nonReentrant {
+    function deposit(uint256 _amount) external nonReentrant {
         PoolInfo storage pool = poolInfo;
         UserInfo storage user = userInfo[msg.sender];
 
@@ -182,7 +182,7 @@ contract FarmLockTier is Ownable, ReentrancyGuard  {
     }
 
     // Withdraw LP or token
-    function withdraw(uint256 _amount) public nonReentrant {
+    function withdraw(uint256 _amount) external nonReentrant {
         PoolInfo storage pool = poolInfo;
         UserInfo storage user = userInfo[msg.sender];
         
@@ -239,7 +239,7 @@ contract FarmLockTier is Ownable, ReentrancyGuard  {
     
     // Lock LP or token
     // To participate IDO, need locked amount for a duration
-    function lock(uint256 _amount) public nonReentrant {
+    function lock(uint256 _amount) external nonReentrant {
         PoolInfo storage pool = poolInfo;
         UserInfo storage user = userInfo[msg.sender];
         
@@ -257,7 +257,7 @@ contract FarmLockTier is Ownable, ReentrancyGuard  {
     }    
 
     // Withdraw without caring about rewards. EMERGENCY ONLY.
-    function emergencyWithdraw() public nonReentrant {
+    function emergencyWithdraw() external nonReentrant {
         PoolInfo storage pool = poolInfo;
         UserInfo storage user = userInfo[msg.sender];
 
@@ -272,40 +272,56 @@ contract FarmLockTier is Ownable, ReentrancyGuard  {
             _availableAmount = user.amount.sub(user.lockedAmount);
         }         
 
-        pool.lpToken.safeTransfer(address(msg.sender), _availableAmount);
-        user.amount = user.amount.sub(_availableAmount);
-        user.rewardDebt = 0;
+        if(pool.withdrawalFeeBP > 0){
+            uint256 withdrawalFee = _availableAmount.mul(pool.withdrawalFeeBP).div(10000);
+            pool.lpToken.safeTransfer(feeAddress, withdrawalFee);
+            user.amount = user.amount.sub(_availableAmount);
+            _availableAmount = _availableAmount.sub(withdrawalFee);
+            pool.lpToken.safeTransfer(address(msg.sender), _availableAmount);
+        }else{
+            user.amount = user.amount.sub(_availableAmount);
+            pool.lpToken.safeTransfer(address(msg.sender), _availableAmount);
+        }  
+
+        if (user.amount==0) {
+            user.rewardDebt = 0;
+        }
+        else {
+            user.rewardDebt = user.amount.mul(pool.accRewardTPerShare).div(1e30);
+        }
         emit EmergencyWithdraw(msg.sender, _availableAmount);
     }
 
     // Withdraw reward. EMERGENCY ONLY.
-    function emergencyRewardWithdraw(uint256 _amount) public onlyOwner {
+    function emergencyRewardWithdraw(uint256 _amount) external onlyOwner {
         require(_amount < rewardToken.balanceOf(address(this)), 'emergencyRewardWithdraw: not enough token');
         rewardToken.safeTransfer(address(msg.sender), _amount);
+        emit EmergencyRewardWithdraw(msg.sender, _amount);
     }
     
     // Add a function to update rewardPerBlock. Can only be called by the owner.
-    function updateRewardPerBlock(uint256 _rewardPerBlock) public onlyOwner {
-        rewardPerBlock = _rewardPerBlock;
+    function updateRewardPerBlock(uint256 _rewardPerBlock) external onlyOwner {
+        emit RewardPerBlockUpdated(msg.sender, rewardPerBlock, _rewardPerBlock);
         //Automatically updatePool 0
-        updatePool();        
+        updatePool();  
+        rewardPerBlock = _rewardPerBlock;
     } 
     
     // Add a function to update bonusEndBlock. Can only be called by the owner.
-    function updateEndBlock(uint256 _endBlock) public onlyOwner {
+    function updateEndBlock(uint256 _endBlock) external onlyOwner {
         emit EndBlockUpdated(msg.sender, poolInfo.endBlock, _endBlock);
         poolInfo.endBlock = _endBlock;
     }   
     
     // Update the given pool's withdrawal fee. Can only be called by the owner.
-    function updateWithdrawalFeeBP(uint16 _withdrawalFeeBP) public onlyOwner {
+    function updateWithdrawalFeeBP(uint16 _withdrawalFeeBP) external onlyOwner {
         require(_withdrawalFeeBP <= MAX_WITHDRAWAL_FEE, "updateWithdrawalFeeBP: invalid withdrawal fee basis points");
         emit WithdrawalFeeUpdated(msg.sender, poolInfo.withdrawalFeeBP, _withdrawalFeeBP);
         poolInfo.withdrawalFeeBP = _withdrawalFeeBP;
     } 
     
     // Add a function to update startBlock. Can only be called by the owner.
-    function updateStartBlock(uint256 _startBlock) public onlyOwner {
+    function updateStartBlock(uint256 _startBlock) external onlyOwner {
         //Can only be updated if the original startBlock is not minted
         require(block.number <= poolInfo.lastRewardBlock, "updateStartBlock: startblock already minted");
         poolInfo.lastRewardBlock = _startBlock;
@@ -314,14 +330,14 @@ contract FarmLockTier is Ownable, ReentrancyGuard  {
     } 
     
     //Update fee address by the owner
-    function setFeeAddress(address _feeAddress) public onlyOwner {
+    function setFeeAddress(address _feeAddress) external onlyOwner {
         require(_feeAddress != address(0), "setFeeAddress: ZERO");
         feeAddress = _feeAddress;
         emit FeeAddressUpdated(msg.sender, _feeAddress);
     }   
 
     // Set lock times for next IDO. Can only be called by the owner.
-    function setLockTimes(uint256 _start, uint256 _max, uint256 _end) public onlyOwner {
+    function setLockTimes(uint256 _start, uint256 _max, uint256 _end) external onlyOwner {
         require(_start > lockTimes.end, "updateLockTimes : start time must come after end of last IDO");
         require(_start > 0, "updateLockTimes : start time 0");
         require(_start > block.timestamp, "updateLockTimes : can't set start before now");
@@ -339,7 +355,7 @@ contract FarmLockTier is Ownable, ReentrancyGuard  {
     }  
     
     // Update max lock times in case IDO slitghly postpone. Can only be called by the owner.
-    function updateMaxLockTime(uint256 _max) public onlyOwner {
+    function updateMaxLockTime(uint256 _max) external onlyOwner {
         require(lockTimes.end > _max, "updateLockTimes : end time lower than max");
         require(_max > lockTimes.start, "updateLockTimes : max time lower than start");
         emit MaxLockTimeUpdated(msg.sender, lockTimes.max, _max);
