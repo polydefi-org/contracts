@@ -64,8 +64,8 @@ contract FarmLockTier is Ownable, ReentrancyGuard  {
     IDOLockTimes public lockTimes;
 
     event Deposit(address indexed user, uint256 amount);
-    event Withdraw(address indexed user, uint256 amount);
-    event EmergencyWithdraw(address indexed user, uint256 amount);
+    event Withdraw(address indexed user, uint256 requestedAmount, uint256 receivedAmount);
+    event EmergencyWithdraw(address indexed user, uint256 requestedAmount, uint256 receivedAmount);
     event FeeAddressUpdated(address indexed user, address indexed newAddress);
     event LockedAmount(address indexed user, uint256 indexed amount);
     event StartLockTimeUpdated(address indexed user, uint256 previousValue, uint256 newValue);
@@ -187,6 +187,8 @@ contract FarmLockTier is Ownable, ReentrancyGuard  {
         UserInfo storage user = userInfo[msg.sender];
         
         uint256 _availableAmount;
+        uint256 _userWithdrawalAmount = _amount;
+        
         if (block.timestamp >= user.lockedUntil){
             pool.totalLockedAmount = pool.totalLockedAmount.sub(user.lockedAmount);
             user.lockedAmount = 0;
@@ -198,6 +200,7 @@ contract FarmLockTier is Ownable, ReentrancyGuard  {
         }        
         
         require(_availableAmount >= _amount, "withdraw: not good");
+        
         updatePool();
         uint256 pending = user.amount.mul(pool.accRewardTPerShare).div(1e30).sub(user.rewardDebt);
         if(pending > 0) {
@@ -220,7 +223,7 @@ contract FarmLockTier is Ownable, ReentrancyGuard  {
         }
         user.rewardDebt = user.amount.mul(pool.accRewardTPerShare).div(1e30);
 
-        emit Withdraw(msg.sender, _amount);
+        emit Withdraw(msg.sender, _userWithdrawalAmount, _amount);
     }
     
     // Return availabe amount per user for the UI
@@ -245,9 +248,10 @@ contract FarmLockTier is Ownable, ReentrancyGuard  {
         
         require(block.timestamp > lockTimes.start, "lock : start : can't lock now");
         require(lockTimes.max > block.timestamp, "lock : max : can't lock now");
-        require(_amount > 0, 'lock: amount too low');
-        require(user.amount > 0, 'lock: nothing to lock');
-        require(_amount <= user.amount, 'lock: not enough token');
+        require(_amount > 0, "lock: amount too low");
+        require(user.amount > 0, "lock: nothing to lock");
+        require(_amount <= user.amount, "lock: not enough token");
+        require(_amount.add(user.lockedAmount) <= user.amount, "lock: amount added to lock amount bigger than availabe");
 
         user.lockedAmount = user.lockedAmount.add(_amount);
         user.lockedUntil = lockTimes.end;
@@ -272,6 +276,8 @@ contract FarmLockTier is Ownable, ReentrancyGuard  {
             _availableAmount = user.amount.sub(user.lockedAmount);
         }         
 
+        uint256 _userWithdrawalAmount = _availableAmount;
+
         if(pool.withdrawalFeeBP > 0){
             uint256 withdrawalFee = _availableAmount.mul(pool.withdrawalFeeBP).div(10000);
             pool.lpToken.safeTransfer(feeAddress, withdrawalFee);
@@ -289,12 +295,12 @@ contract FarmLockTier is Ownable, ReentrancyGuard  {
         else {
             user.rewardDebt = user.amount.mul(pool.accRewardTPerShare).div(1e30);
         }
-        emit EmergencyWithdraw(msg.sender, _availableAmount);
+        emit EmergencyWithdraw(msg.sender, _userWithdrawalAmount, _availableAmount);
     }
 
     // Withdraw reward. EMERGENCY ONLY.
     function emergencyRewardWithdraw(uint256 _amount) external onlyOwner {
-        require(_amount < rewardToken.balanceOf(address(this)), 'emergencyRewardWithdraw: not enough token');
+        require(_amount <= rewardToken.balanceOf(address(this)), 'emergencyRewardWithdraw: not enough token');
         rewardToken.safeTransfer(address(msg.sender), _amount);
         emit EmergencyRewardWithdraw(msg.sender, _amount);
     }
@@ -323,7 +329,7 @@ contract FarmLockTier is Ownable, ReentrancyGuard  {
     // Add a function to update startBlock. Can only be called by the owner.
     function updateStartBlock(uint256 _startBlock) external onlyOwner {
         //Can only be updated if the original startBlock is not minted
-        require(block.number <= poolInfo.lastRewardBlock, "updateStartBlock: startblock already minted");
+        require(block.number < poolInfo.lastRewardBlock, "updateStartBlock: startblock already minted");
         poolInfo.lastRewardBlock = _startBlock;
         emit StartBlockUpdated(msg.sender, startBlock, _startBlock);
         startBlock = _startBlock;
